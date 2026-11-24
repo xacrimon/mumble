@@ -754,7 +754,8 @@ void CoreAudioInput::run() {
 		inputDevId = core_audio_utils::ResolveDeviceID(Global::get().s.qsCoreAudioInput, AUDirection::INPUT);
 
 		if (doEcho) {
-			echoOutputDevId = core_audio_utils::GetDeviceID(Global::get().s.qsCoreAudioOutput, AUDirection::OUTPUT);
+			echoOutputDevId =
+				core_audio_utils::ResolveDeviceID(Global::get().s.qsCoreAudioOutput, AUDirection::OUTPUT);
 			if (!openAUVoip(fmt)) { return; };
 		} else {
 			if (!openAUHAL(fmt)) { return; };
