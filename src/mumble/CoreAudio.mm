@@ -768,6 +768,7 @@ void CoreAudioInput::run() {
 		}
 	} catch (core_audio_utils::CoreAudioException& e) {
 		qWarning() << "CoreAudioInput: " << e.getMessage();
+		return;
 	}
 
 #ifdef DEBUG
