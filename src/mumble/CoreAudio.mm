@@ -203,6 +203,23 @@ AudioDeviceID GetDefaultDeviceID(AUDirection type) {
     return devId;
 }
 
+/// @returns The ID of the device with the given UID or of the default device, if the UID is empty
+/// 	or the respective device is currently not available.
+AudioDeviceID ResolveDeviceID(const QString &devUid, AUDirection type) {
+	if (!devUid.isEmpty()) {
+		try {
+			AudioDeviceID devId = GetDeviceID(devUid, type);
+			if (devId != kAudioObjectUnknown) {
+				return devId;
+			}
+		} catch (CoreAudioException &) {
+		}
+		qWarning("CoreAudio: Device '%s' is not available. Using the default device instead.", qPrintable(devUid));
+	}
+
+	return GetDefaultDeviceID(type);
+}
+
 UInt32 GetDeviceTransportType(AudioObjectID devId){
 	return core_audio_utils::GetDeviceUint32Property(devId,
 	                                                 kAudioDevicePropertyTransportType,
@@ -731,11 +748,10 @@ void CoreAudioInput::run() {
 	try {
 		if (!Global::get().s.qsCoreAudioInput.isEmpty()) {
 			qWarning("CoreAudioInput: Set device to '%s'.", qPrintable(Global::get().s.qsCoreAudioInput));
-			inputDevId = core_audio_utils::GetDeviceID(Global::get().s.qsCoreAudioInput, AUDirection::INPUT);
 		} else {
 			qWarning("CoreAudioInput: Set device to 'Default Device'.");
-			inputDevId = core_audio_utils::GetDefaultDeviceID(AUDirection::INPUT);
 		}
+		inputDevId = core_audio_utils::ResolveDeviceID(Global::get().s.qsCoreAudioInput, AUDirection::INPUT);
 
 		if (doEcho) {
 			echoOutputDevId = core_audio_utils::GetDeviceID(Global::get().s.qsCoreAudioOutput, AUDirection::OUTPUT);
@@ -961,13 +977,10 @@ void CoreAudioOutput::run() {
 	try {
 		if (!Global::get().s.qsCoreAudioOutput.isEmpty()) {
 			qWarning("CoreAudioOutput: Set device to '%s'.", qPrintable(Global::get().s.qsCoreAudioOutput));
-
-			devId = core_audio_utils::GetDeviceID(Global::get().s.qsCoreAudioOutput, AUDirection::OUTPUT);
 		} else {
 			qWarning("CoreAudioOutput: Set device to 'Default Device'.");
-
-			devId = core_audio_utils::GetDefaultDeviceID(AUDirection::OUTPUT);
 		}
+		devId = core_audio_utils::ResolveDeviceID(Global::get().s.qsCoreAudioOutput, AUDirection::OUTPUT);
 	} catch (core_audio_utils::CoreAudioException& e) {
 		qWarning() << "CoreAudioOutput: " << e.what();
 	}
