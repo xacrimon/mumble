@@ -11,6 +11,8 @@
 #define MOD_OFFSET   0x10000
 #define MOUSE_OFFSET 0x20000
 
+static constexpr qint64 TAP_TIMEOUT_GRACE_PERIOD_MS = 60 * 1000;
+
 GlobalShortcutEngine *GlobalShortcutEngine::platformInit() {
 	return new GlobalShortcutMac();
 }
@@ -71,13 +73,22 @@ CGEventRef GlobalShortcutMac::callback(CGEventTapProxy proxy, CGEventType type,
 		}
 
 		case kCGEventTapDisabledByTimeout:
-			qWarning("GlobalShortcutMac: EventTap disabled by timeout. Re-enabling.");
 			/*
 			 * Re-enable the event tap if it gets disabled by timeout.
 			 *
 			 * See: http://lists.apple.com/archives/quartz-dev/2009/Sep/msg00007.html
+			 *
+			 * All input is blocked while the tap is timing out, so a tap that keeps
+			 * doing so must stay disabled in order to not render the system unusable.
 			 */
-			CGEventTapEnable(gs->port, true);
+			if (gs->lastTapTimeout.isValid() && gs->lastTapTimeout.elapsed() < TAP_TIMEOUT_GRACE_PERIOD_MS) {
+				qWarning("GlobalShortcutMac: EventTap disabled by timeout again. Leaving it disabled. Global Shortcuts "
+						 "will not be available.");
+			} else {
+				qWarning("GlobalShortcutMac: EventTap disabled by timeout. Re-enabling.");
+				CGEventTapEnable(gs->port, true);
+			}
+			gs->lastTapTimeout.start();
 			break;
 
 		case kCGEventTapDisabledByUserInput:

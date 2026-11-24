@@ -6,6 +6,7 @@
 #ifndef MUMBLE_MUMBLE_GLOBALSHORTCUT_MACX_H_
 #define MUMBLE_MUMBLE_GLOBALSHORTCUT_MACX_H_
 
+#include <QtCore/QElapsedTimer>
 #include <QtCore/QObject>
 #include <stdlib.h>
 
@@ -35,6 +36,8 @@ protected:
 	CFRunLoopRef loop;
 	CFMachPortRef port;
 	CGEventFlags modmask;
+	/// Time since the event tap was last disabled by the system due to a timeout
+	QElapsedTimer lastTapTimeout;
 	UCKeyboardLayout *kbdLayout;
 
 	void run() Q_DECL_OVERRIDE;
