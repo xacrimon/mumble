@@ -48,7 +48,12 @@ protected:
 	static OSStatus deviceChange(AudioObjectID inObjectID, UInt32 inNumberAddresses,
 								 const AudioObjectPropertyAddress inAddresses[], void *udata);
 	/// Restarts the audio input on the main thread, if the given instance is still the active one
-	static void scheduleRestart(void *instance);
+	///
+	/// @param onlyOnDeviceChange Whether to skip the restart if the instance uses the intended devices
+	static void scheduleRestart(void *instance, bool onlyOnDeviceChange);
+	/// @returns Whether the devices in use are the ones that should currently be used according to the
+	/// 	settings and the available devices
+	bool usesIntendedDevices() const;
 	static OSStatus inputCallback(void *udata, AudioUnitRenderActionFlags *flags, const AudioTimeStamp *ts,
 								  UInt32 busnum, UInt32 npackets, AudioBufferList *buflist);
 
@@ -66,12 +71,18 @@ private:
 protected:
 	/// Hardware Abstraction Layer's AudioOutputUnit, directly interacts with the hardware
 	AudioUnit auHAL{};
+	AudioDeviceID outputDevId{};
 	static void propertyChange(void *udata, AudioUnit au, AudioUnitPropertyID prop, AudioUnitScope scope,
 							   AudioUnitElement element);
 	static OSStatus deviceChange(AudioObjectID inObjectID, UInt32 inNumberAddresses,
 								 const AudioObjectPropertyAddress inAddresses[], void *udata);
 	/// Restarts the audio output on the main thread, if the given instance is still the active one
-	static void scheduleRestart(void *instance);
+	///
+	/// @param onlyOnDeviceChange Whether to skip the restart if the instance uses the intended device
+	static void scheduleRestart(void *instance, bool onlyOnDeviceChange);
+	/// @returns Whether the device in use is the one that should currently be used according to the
+	/// 	settings and the available devices
+	bool usesIntendedDevice() const;
 	static OSStatus outputCallback(void *udata, AudioUnitRenderActionFlags *flags, const AudioTimeStamp *ts,
 								   UInt32 busnum, UInt32 npackets, AudioBufferList *buflist);
 

@@ -220,6 +220,12 @@ AudioDeviceID ResolveDeviceID(const QString &devUid, AUDirection type) {
 	return GetDefaultDeviceID(type);
 }
 
+/// The properties of the system object whose changes can affect which device is to be used: the
+/// default devices and the list of available devices.
+constexpr AudioObjectPropertySelector deviceChangeSelectors[] = { kAudioHardwarePropertyDefaultInputDevice,
+																  kAudioHardwarePropertyDefaultOutputDevice,
+																  kAudioHardwarePropertyDevices };
+
 UInt32 GetDeviceTransportType(AudioObjectID devId){
 	return core_audio_utils::GetDeviceUint32Property(devId,
 	                                                 kAudioDevicePropertyTransportType,
@@ -834,8 +840,11 @@ void CoreAudioInput::run() {
 		kAudioObjectPropertyScopeGlobal,
 		kAudioObjectPropertyElementMain
 	};
-	CHECK_WARN(AudioObjectAddPropertyListener(kAudioObjectSystemObject, &inputDeviceAddress, CoreAudioInput::deviceChange, this),
-			   "CoreAudioInput: Unable to create input device change listener. Unable to listen to device changes.");
+	for (AudioObjectPropertySelector selector : core_audio_utils::deviceChangeSelectors) {
+		inputDeviceAddress.mSelector = selector;
+		CHECK_WARN(AudioObjectAddPropertyListener(kAudioObjectSystemObject, &inputDeviceAddress, CoreAudioInput::deviceChange, this),
+				   "CoreAudioInput: Unable to create input device change listener. Unable to listen to device changes.");
+	}
 
 	buflist.mNumberBuffers = 1;
 	AudioBuffer *b         = buflist.mBuffers;
@@ -859,7 +868,11 @@ void CoreAudioInput::stop() {
 	AudioObjectPropertyAddress inputDeviceAddress = { kAudioHardwarePropertyDefaultInputDevice,
 													  kAudioObjectPropertyScopeGlobal,
 													  kAudioObjectPropertyElementMain };
-	AudioObjectRemovePropertyListener(kAudioObjectSystemObject, &inputDeviceAddress, CoreAudioInput::deviceChange, this);
+	for (AudioObjectPropertySelector selector : core_audio_utils::deviceChangeSelectors) {
+		inputDeviceAddress.mSelector = selector;
+		AudioObjectRemovePropertyListener(kAudioObjectSystemObject, &inputDeviceAddress, CoreAudioInput::deviceChange,
+										  this);
+	}
 	if (AudioUnit au = auVoip ? auVoip : auHAL) {
 		AudioUnitRemovePropertyListenerWithUserData(au, kAudioUnitProperty_StreamFormat, CoreAudioInput::propertyChange,
 													this);
@@ -928,7 +941,7 @@ void CoreAudioInput::propertyChange(void *udata, AudioUnit auHAL, AudioUnitPrope
 
 	if (prop == kAudioUnitProperty_StreamFormat) {
 		qWarning("CoreAudioInput: Stream format change detected. Restarting AudioInput.");
-		CoreAudioInput::scheduleRestart(udata);
+		CoreAudioInput::scheduleRestart(udata, false);
 	} else {
 		qWarning("CoreAudioInput: Unexpected property changed event received.");
 	}
@@ -940,20 +953,39 @@ OSStatus CoreAudioInput::deviceChange(AudioObjectID inObjectID, UInt32 inNumberA
 	Q_UNUSED(inNumberAddresses);
 	Q_UNUSED(inAddresses);
 
-	qWarning("CoreAudioInput: Input device change detected. Restarting AudioInput.");
-	CoreAudioInput::scheduleRestart(udata);
+	CoreAudioInput::scheduleRestart(udata, true);
 
 	return noErr;
 }
 
-void CoreAudioInput::scheduleRestart(void *instance) {
+bool CoreAudioInput::usesIntendedDevices() const {
+	try {
+		const Settings &settings = Global::get().s;
+		if (core_audio_utils::ResolveDeviceID(settings.qsCoreAudioInput, AUDirection::INPUT) != inputDevId) {
+			return false;
+		}
+		return !auVoip
+			   || core_audio_utils::ResolveDeviceID(settings.qsCoreAudioOutput, AUDirection::OUTPUT) == echoOutputDevId;
+	} catch (core_audio_utils::CoreAudioException &) {
+		// Without knowing the intended device, a restart could not improve the situation
+		return true;
+	}
+}
+
+void CoreAudioInput::scheduleRestart(void *instance, bool onlyOnDeviceChange) {
 	// Listeners are called on a CoreAudio thread and may still fire for an instance that is being
 	// (or has been) destroyed, so the instance must not be dereferenced here.
 	QMetaObject::invokeMethod(
 		QCoreApplication::instance(),
-		[instance]() {
+		[instance, onlyOnDeviceChange]() {
 			if (Global::get().ai.get() != instance) {
 				return;
+			}
+			if (onlyOnDeviceChange) {
+				if (static_cast< CoreAudioInput * >(instance)->usesIntendedDevices()) {
+					return;
+				}
+				qWarning("CoreAudioInput: Input device change detected. Restarting AudioInput.");
 			}
 			Audio::stopInput();
 			Audio::startInput();
@@ -970,7 +1002,6 @@ void CoreAudioOutput::run() {
 	OSStatus err;
 	AudioStreamBasicDescription fmt;
 	unsigned int chanmasks[32];
-	AudioDeviceID devId = 0;
 	UInt32 len;
 	AudioObjectPropertyAddress propertyAddress = { 0, kAudioDevicePropertyScopeOutput,
 	                                               kAudioObjectPropertyElementMain };
@@ -981,7 +1012,7 @@ void CoreAudioOutput::run() {
 		} else {
 			qWarning("CoreAudioOutput: Set device to 'Default Device'.");
 		}
-		devId = core_audio_utils::ResolveDeviceID(Global::get().s.qsCoreAudioOutput, AUDirection::OUTPUT);
+		outputDevId = core_audio_utils::ResolveDeviceID(Global::get().s.qsCoreAudioOutput, AUDirection::OUTPUT);
 	} catch (core_audio_utils::CoreAudioException& e) {
 		qWarning() << "CoreAudioOutput: " << e.what();
 	}
@@ -1008,7 +1039,7 @@ void CoreAudioOutput::run() {
 	             "CoreAudioOutput: Unable to initialize output AudioUnit");
 
 	len = sizeof(AudioDeviceID);
-	CHECK_RETURN(AudioUnitSetProperty(auHAL, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &devId, len),
+	CHECK_RETURN(AudioUnitSetProperty(auHAL, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &outputDevId, len),
 	             "CoreAudioOutput: Unable to set CurrentDevice property on AudioUnit.");
 
 	len = sizeof(AudioStreamBasicDescription);
@@ -1065,8 +1096,11 @@ void CoreAudioOutput::run() {
 		kAudioObjectPropertyScopeGlobal,
 		kAudioObjectPropertyElementMain
 	};
-	CHECK_WARN(AudioObjectAddPropertyListener(kAudioObjectSystemObject, &outputDeviceAddress, CoreAudioOutput::deviceChange, this),
-			   "CoreAudioOutput: Unable to create output device change listener. Unable to listen to device changes.");
+	for (AudioObjectPropertySelector selector : core_audio_utils::deviceChangeSelectors) {
+		outputDeviceAddress.mSelector = selector;
+		CHECK_WARN(AudioObjectAddPropertyListener(kAudioObjectSystemObject, &outputDeviceAddress, CoreAudioOutput::deviceChange, this),
+				   "CoreAudioOutput: Unable to create output device change listener. Unable to listen to device changes.");
+	}
 
 	AURenderCallbackStruct cb;
 	cb.inputProc       = CoreAudioOutput::outputCallback;
@@ -1078,7 +1112,7 @@ void CoreAudioOutput::run() {
 	AudioValueRange range;
 	len                       = sizeof(AudioValueRange);
 	propertyAddress.mSelector = kAudioDevicePropertyBufferFrameSizeRange;
-	err                       = AudioObjectGetPropertyData(devId, &propertyAddress, 0, nullptr, &len, &range);
+	err                       = AudioObjectGetPropertyData(outputDevId, &propertyAddress, 0, nullptr, &len, &range);
 	if (err != noErr) {
 		qWarning("CoreAudioOutput: Unable to query for allowed buffer size ranges.");
 	} else {
@@ -1088,7 +1122,7 @@ void CoreAudioOutput::run() {
 
 	UInt32 val                = (iFrameSize * iMixerFreq) / SAMPLE_RATE;
 	propertyAddress.mSelector = kAudioDevicePropertyBufferFrameSize;
-	CHECK_WARN(AudioObjectSetPropertyData(devId, &propertyAddress, 0, nullptr, sizeof(UInt32), &val),
+	CHECK_WARN(AudioObjectSetPropertyData(outputDevId, &propertyAddress, 0, nullptr, sizeof(UInt32), &val),
 	           "CoreAudioOutput: Could not set requested buffer size for device. Continuing with default.");
 
 	CHECK_RETURN(AudioOutputUnitStart(auHAL),
@@ -1103,8 +1137,11 @@ void CoreAudioOutput::stop() {
 	AudioObjectPropertyAddress outputDeviceAddress = { kAudioHardwarePropertyDefaultOutputDevice,
 													   kAudioObjectPropertyScopeGlobal,
 													   kAudioObjectPropertyElementMain };
-	AudioObjectRemovePropertyListener(kAudioObjectSystemObject, &outputDeviceAddress, CoreAudioOutput::deviceChange,
-									  this);
+	for (AudioObjectPropertySelector selector : core_audio_utils::deviceChangeSelectors) {
+		outputDeviceAddress.mSelector = selector;
+		AudioObjectRemovePropertyListener(kAudioObjectSystemObject, &outputDeviceAddress,
+										  CoreAudioOutput::deviceChange, this);
+	}
 	if (auHAL) {
 		AudioUnitRemovePropertyListenerWithUserData(auHAL, kAudioUnitProperty_StreamFormat,
 													CoreAudioOutput::propertyChange, this);
@@ -1159,7 +1196,7 @@ void CoreAudioOutput::propertyChange(void *udata, AudioUnit auHAL, AudioUnitProp
 
 	if (prop == kAudioUnitProperty_StreamFormat) {
 		qWarning("CoreAudioOutput: Stream format change detected. Restarting AudioOutput.");
-		CoreAudioOutput::scheduleRestart(udata);
+		CoreAudioOutput::scheduleRestart(udata, false);
 	} else {
 		qWarning("CoreAudioOutput: Unexpected property changed event received.");
 	}
@@ -1171,19 +1208,33 @@ OSStatus CoreAudioOutput::deviceChange(AudioObjectID inObjectID, UInt32 inNumber
 	Q_UNUSED(inNumberAddresses);
 	Q_UNUSED(inAddresses);
 
-	qWarning("CoreAudioOutput: Output device change detected. Restarting AudioOutput.");
-	CoreAudioOutput::scheduleRestart(udata);
+	CoreAudioOutput::scheduleRestart(udata, true);
 
 	return noErr;
 }
 
-void CoreAudioOutput::scheduleRestart(void *instance) {
+bool CoreAudioOutput::usesIntendedDevice() const {
+	try {
+		return core_audio_utils::ResolveDeviceID(Global::get().s.qsCoreAudioOutput, AUDirection::OUTPUT) == outputDevId;
+	} catch (core_audio_utils::CoreAudioException &) {
+		// Without knowing the intended device, a restart could not improve the situation
+		return true;
+	}
+}
+
+void CoreAudioOutput::scheduleRestart(void *instance, bool onlyOnDeviceChange) {
 	// See CoreAudioInput::scheduleRestart
 	QMetaObject::invokeMethod(
 		QCoreApplication::instance(),
-		[instance]() {
+		[instance, onlyOnDeviceChange]() {
 			if (Global::get().ao.get() != instance) {
 				return;
+			}
+			if (onlyOnDeviceChange) {
+				if (static_cast< CoreAudioOutput * >(instance)->usesIntendedDevice()) {
+					return;
+				}
+				qWarning("CoreAudioOutput: Output device change detected. Restarting AudioOutput.");
 			}
 			Audio::stopOutput();
 			Audio::startOutput();
