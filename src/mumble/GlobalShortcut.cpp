@@ -672,7 +672,7 @@ bool GlobalShortcutConfig::eventFilter(QObject * /*object*/, QEvent *e) {
 
 bool GlobalShortcutConfig::showWarning() const {
 #ifdef Q_OS_MACOS
-	return !AXIsProcessTrustedWithOptions(nullptr);
+	return !CGPreflightPostEventAccess() || !CGPreflightListenEventAccess();
 #endif
 	return false;
 }
