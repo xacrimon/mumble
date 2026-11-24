@@ -132,7 +132,10 @@ GlobalShortcutMac::GlobalShortcutMac()
 	                        this);
 
 	if (! port) {
-		qWarning("GlobalShortcutMac: Unable to create EventTap. Global Shortcuts will not be available.");
+		qWarning("GlobalShortcutMac: Unable to create EventTap (accessibility permission: %s, input monitoring "
+				 "permission: %s). Global Shortcuts will not be available.",
+				 CGPreflightPostEventAccess() ? "granted" : "missing",
+				 CGPreflightListenEventAccess() ? "granted" : "missing");
 		return;
 	}
 
