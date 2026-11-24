@@ -8,6 +8,7 @@
 #include <Foundation/Foundation.h>
 
 static bool appNapSuppressed = false;
+static id< NSObject > appNapActivity = nil;
 
 void MUSuppressAppNap(bool suppress) {
 	if (suppress == appNapSuppressed) {
@@ -19,10 +20,13 @@ void MUSuppressAppNap(bool suppress) {
 	NSString *reason = const_cast<NSString *>(reinterpret_cast<const NSString *>(CFStringCreateWithCharacters(kCFAllocatorDefault, reinterpret_cast<const UniChar *>(translatedReason.unicode()), translatedReason.length())));
 
 	if (suppress) {
-		[[NSProcessInfo processInfo] disableAutomaticTermination:reason];
+		appNapActivity = [[[NSProcessInfo processInfo] beginActivityWithOptions:NSActivityUserInitiatedAllowingIdleSystemSleep
+																			  reason:reason] retain];
 		qWarning("AppNap: suppressed with reason: '%s'", qPrintable(translatedReason));
 	} else {
-		[[NSProcessInfo processInfo] enableAutomaticTermination:reason];
+		[[NSProcessInfo processInfo] endActivity:appNapActivity];
+		[appNapActivity release];
+		appNapActivity = nil;
 		qWarning("AppNap: re-enabled, was suppressed with reason: '%s'", qPrintable(translatedReason));
 	}
 
