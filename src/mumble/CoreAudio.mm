@@ -839,6 +839,15 @@ void CoreAudioInput::run() {
 void CoreAudioInput::stop() {
 	bRunning = false;
 
+	AudioObjectPropertyAddress inputDeviceAddress = { kAudioHardwarePropertyDefaultInputDevice,
+													  kAudioObjectPropertyScopeGlobal,
+													  kAudioObjectPropertyElementMain };
+	AudioObjectRemovePropertyListener(kAudioObjectSystemObject, &inputDeviceAddress, CoreAudioInput::deviceChange, this);
+	if (AudioUnit au = auVoip ? auVoip : auHAL) {
+		AudioUnitRemovePropertyListenerWithUserData(au, kAudioUnitProperty_StreamFormat, CoreAudioInput::propertyChange,
+													this);
+	}
+
 	if (auHAL) {
 		CHECK_WARN(AudioOutputUnitStop(auHAL),
 		           "CoreAudioInput: Unable to stop AudioUnit.");
@@ -900,12 +909,9 @@ void CoreAudioInput::propertyChange(void *udata, AudioUnit auHAL, AudioUnitPrope
 	Q_UNUSED(scope);
 	Q_UNUSED(element);
 
-	CoreAudioInput *o = reinterpret_cast< CoreAudioInput * >(udata);
-	if (!o->bRunning) { return; }
 	if (prop == kAudioUnitProperty_StreamFormat) {
 		qWarning("CoreAudioInput: Stream format change detected. Restarting AudioInput.");
-		Audio::stopInput();
-		Audio::startInput();
+		CoreAudioInput::scheduleRestart(udata);
 	} else {
 		qWarning("CoreAudioInput: Unexpected property changed event received.");
 	}
@@ -917,14 +923,25 @@ OSStatus CoreAudioInput::deviceChange(AudioObjectID inObjectID, UInt32 inNumberA
 	Q_UNUSED(inNumberAddresses);
 	Q_UNUSED(inAddresses);
 
-	CoreAudioInput *o = reinterpret_cast< CoreAudioInput * >(udata);
-	if (!o->bRunning) return noErr;
-
 	qWarning("CoreAudioInput: Input device change detected. Restarting AudioInput.");
-	Audio::stopInput();
-	Audio::startInput();
+	CoreAudioInput::scheduleRestart(udata);
 
 	return noErr;
+}
+
+void CoreAudioInput::scheduleRestart(void *instance) {
+	// Listeners are called on a CoreAudio thread and may still fire for an instance that is being
+	// (or has been) destroyed, so the instance must not be dereferenced here.
+	QMetaObject::invokeMethod(
+		QCoreApplication::instance(),
+		[instance]() {
+			if (Global::get().ai.get() != instance) {
+				return;
+			}
+			Audio::stopInput();
+			Audio::startInput();
+		},
+		Qt::QueuedConnection);
 }
 
 
@@ -1069,6 +1086,16 @@ void CoreAudioOutput::run() {
 void CoreAudioOutput::stop() {
 	bRunning = false;
 
+	AudioObjectPropertyAddress outputDeviceAddress = { kAudioHardwarePropertyDefaultOutputDevice,
+													   kAudioObjectPropertyScopeGlobal,
+													   kAudioObjectPropertyElementMain };
+	AudioObjectRemovePropertyListener(kAudioObjectSystemObject, &outputDeviceAddress, CoreAudioOutput::deviceChange,
+									  this);
+	if (auHAL) {
+		AudioUnitRemovePropertyListenerWithUserData(auHAL, kAudioUnitProperty_StreamFormat,
+													CoreAudioOutput::propertyChange, this);
+	}
+
 	if (auHAL) {
 		CHECK_WARN(AudioOutputUnitStop(auHAL),
 		           "CoreAudioOutput: Unable to stop AudioUnit.");
@@ -1116,14 +1143,9 @@ void CoreAudioOutput::propertyChange(void *udata, AudioUnit auHAL, AudioUnitProp
 	Q_UNUSED(scope);
 	Q_UNUSED(element);
 
-	CoreAudioOutput *o = reinterpret_cast< CoreAudioOutput * >(udata);
-	if (!o->bRunning) return;
-
 	if (prop == kAudioUnitProperty_StreamFormat) {
 		qWarning("CoreAudioOutput: Stream format change detected. Restarting AudioOutput.");
-		o->stop();
-		Audio::stopOutput();
-		Audio::startOutput();
+		CoreAudioOutput::scheduleRestart(udata);
 	} else {
 		qWarning("CoreAudioOutput: Unexpected property changed event received.");
 	}
@@ -1135,12 +1157,22 @@ OSStatus CoreAudioOutput::deviceChange(AudioObjectID inObjectID, UInt32 inNumber
 	Q_UNUSED(inNumberAddresses);
 	Q_UNUSED(inAddresses);
 
-	CoreAudioOutput *o = reinterpret_cast< CoreAudioOutput * >(udata);
-	if (!o->bRunning) return noErr;
-
 	qWarning("CoreAudioOutput: Output device change detected. Restarting AudioOutput.");
-	Audio::stopOutput();
-	Audio::startOutput();
+	CoreAudioOutput::scheduleRestart(udata);
 
 	return noErr;
+}
+
+void CoreAudioOutput::scheduleRestart(void *instance) {
+	// See CoreAudioInput::scheduleRestart
+	QMetaObject::invokeMethod(
+		QCoreApplication::instance(),
+		[instance]() {
+			if (Global::get().ao.get() != instance) {
+				return;
+			}
+			Audio::stopOutput();
+			Audio::startOutput();
+		},
+		Qt::QueuedConnection);
 }

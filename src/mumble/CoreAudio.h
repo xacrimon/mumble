@@ -47,6 +47,8 @@ protected:
 							   AudioUnitElement element);
 	static OSStatus deviceChange(AudioObjectID inObjectID, UInt32 inNumberAddresses,
 								 const AudioObjectPropertyAddress inAddresses[], void *udata);
+	/// Restarts the audio input on the main thread, if the given instance is still the active one
+	static void scheduleRestart(void *instance);
 	static OSStatus inputCallback(void *udata, AudioUnitRenderActionFlags *flags, const AudioTimeStamp *ts,
 								  UInt32 busnum, UInt32 npackets, AudioBufferList *buflist);
 
@@ -68,6 +70,8 @@ protected:
 							   AudioUnitElement element);
 	static OSStatus deviceChange(AudioObjectID inObjectID, UInt32 inNumberAddresses,
 								 const AudioObjectPropertyAddress inAddresses[], void *udata);
+	/// Restarts the audio output on the main thread, if the given instance is still the active one
+	static void scheduleRestart(void *instance);
 	static OSStatus outputCallback(void *udata, AudioUnitRenderActionFlags *flags, const AudioTimeStamp *ts,
 								   UInt32 busnum, UInt32 npackets, AudioBufferList *buflist);
 
